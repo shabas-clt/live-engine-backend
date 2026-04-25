@@ -1,0 +1,26 @@
+[Unit]
+Description=Live Data Engine - Multi-token Tiingo data collector
+After=network.target postgresql.service mongod.service
+Wants=postgresql.service mongod.service
+
+[Service]
+Type=simple
+User=your-username
+Group=your-username
+WorkingDirectory=/path/to/live-engine/backend
+Environment="PATH=/path/to/live-engine/backend/venv/bin"
+ExecStart=/path/to/live-engine/backend/venv/bin/python -m app.main
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/live-engine/app.log
+StandardError=append:/var/log/live-engine/error.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/path/to/live-engine/backend
+
+[Install]
+WantedBy=multi-user.target
