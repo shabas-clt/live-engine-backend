@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Dict, Set
 
 from app.models.token import TiingoToken, TokenStatus, TokenUsageStats
 from app.core.database import db
@@ -114,7 +114,7 @@ class TokenManager:
             return False
 
         # Reset counters if needed
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # Reset hourly counter
         if token.last_reset_hour is None or (now - token.last_reset_hour) >= timedelta(hours=1):
@@ -157,7 +157,7 @@ class TokenManager:
         token.hourly_requests += 1
         token.daily_requests += 1
         token.monthly_bandwidth_mb += bandwidth_kb / 1024.0
-        token.last_used = datetime.utcnow()
+        token.last_used = datetime.now(timezone.utc)
 
         # Add to pending batch (no immediate DB write)
         self._pending_updates[token.id] = token
@@ -200,7 +200,7 @@ class TokenManager:
                                 token.last_reset_hour,
                                 token.last_reset_day,
                                 token.last_reset_month,
-                                datetime.utcnow(),
+                                datetime.now(timezone.utc),
                                 token.id
                             )
                 logger.debug(f"Batch updated {len(updates)} tokens")
@@ -263,7 +263,7 @@ class TokenManager:
         async with db.pool.acquire() as conn:
             await conn.execute(
                 "UPDATE tokens SET status = $1, updated_at = $2 WHERE id = $3",
-                status, datetime.utcnow(), token_id
+                status, datetime.now(timezone.utc), token_id
             )
         
         async with self._lock:
