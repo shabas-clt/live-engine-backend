@@ -33,6 +33,7 @@ class TiingoToken(BaseModel):
     last_reset_hour: Optional[datetime] = None
     last_reset_day: Optional[datetime] = None
     last_reset_month: Optional[datetime] = None
+    last_synced_with_tiingo: Optional[datetime] = None  # Track Tiingo API sync
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
@@ -78,6 +79,7 @@ class TokenUsageStats(BaseModel):
     # Health
     is_healthy: bool
     last_used: Optional[datetime]
+    last_synced_with_tiingo: Optional[datetime]  # Show when last synced
     
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
