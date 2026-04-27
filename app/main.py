@@ -7,7 +7,8 @@ from app.core.config import settings
 from app.core.database import db
 from app.services.token_manager import token_manager
 from app.services.data_collector import data_collector
-from app.api import auth, admin, tokens, stream
+from app.services.candle_aggregator import candle_aggregator
+from app.api import auth, admin, tokens, stream, candles
 from app.scripts.seed_admin import seed_initial_admin, seed_initial_token
 
 # Configure logging
@@ -36,12 +37,16 @@ async def lifespan(app: FastAPI):
     # Start data collection
     await data_collector.start()
     
+    # Start candle aggregation
+    await candle_aggregator.start()
+    
     logger.info("✅ Live Data Engine started successfully")
     
     yield
     
     # Shutdown
     logger.info("⏹️  Shutting down Live Data Engine...")
+    await candle_aggregator.stop()
     await data_collector.stop()
     await db.disconnect()
     logger.info("✅ Shutdown complete")
@@ -69,6 +74,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(tokens.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
+app.include_router(candles.router, prefix="/api")
 
 
 @app.get("/")

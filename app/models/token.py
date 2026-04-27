@@ -14,31 +14,26 @@ class TokenStatus(str, Enum):
 class TiingoToken(BaseModel):
     id: Optional[str] = None
     token: str
-    name: str  # e.g., "Token 1", "BTC Token"
+    name: str
     description: Optional[str] = None
     status: TokenStatus = TokenStatus.ACTIVE
     
-    # Usage tracking
     hourly_requests: int = 0
     daily_requests: int = 0
     monthly_bandwidth_mb: float = 0.0
     
-    # Limits (Tiingo free plan)
     hourly_limit: int = 50
     daily_limit: int = 1000
-    monthly_bandwidth_limit_mb: float = 1024.0  # 1GB
+    monthly_bandwidth_limit_mb: float = 1024.0
     
-    # Timestamps
     last_used: Optional[datetime] = None
     last_reset_hour: Optional[datetime] = None
     last_reset_day: Optional[datetime] = None
     last_reset_month: Optional[datetime] = None
-    last_synced_with_tiingo: Optional[datetime] = None  # Track Tiingo API sync
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
-    # Assignment (optional - which asset/task uses this token)
-    assigned_to: Optional[str] = None  # e.g., "BTC", "GOLD", "SILVER"
+    assigned_to: Optional[str] = None
     
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
@@ -63,7 +58,6 @@ class TokenUsageStats(BaseModel):
     status: TokenStatus
     assigned_to: Optional[str]
     
-    # Current usage
     hourly_requests: int
     hourly_limit: int
     hourly_percentage: float
@@ -76,10 +70,8 @@ class TokenUsageStats(BaseModel):
     monthly_bandwidth_limit_mb: float
     bandwidth_percentage: float
     
-    # Health
     is_healthy: bool
     last_used: Optional[datetime]
-    last_synced_with_tiingo: Optional[datetime]  # Show when last synced
     
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
