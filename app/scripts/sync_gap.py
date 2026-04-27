@@ -67,7 +67,7 @@ async def sync_gap():
     
     intervals = ['1s', '5s', '10s', '15s', '30s', '1m', '5m', '15m']
     
-    current_time = datetime.utcnow()
+    current_time = datetime.now()
     total_synced = 0
     
     for asset in assets:
@@ -82,6 +82,9 @@ async def sync_gap():
                     continue
                 
                 last_time = last_candle['time']
+                if last_time.tzinfo is not None:
+                    last_time = last_time.replace(tzinfo=None)
+                
                 gap_hours = (current_time - last_time).total_seconds() / 3600
                 
                 if gap_hours < 0.1:
