@@ -50,6 +50,7 @@ class TokenCreate(BaseModel):
 
 
 class TokenUpdate(BaseModel):
+    token: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[TokenStatus] = None
