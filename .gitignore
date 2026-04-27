@@ -26,6 +26,15 @@ logs/
 # Database
 *.db
 *.sqlite
+*.sql
+*.sql.gz
+*.csv
+*.csv.gz
+
+# Temporary scripts
+test_*.py
+backfill_*.py
+export_*.py
 
 # OS
 .DS_Store
