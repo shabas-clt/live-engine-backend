@@ -1,7 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status
 from typing import List
 
-from app.core.security import get_current_admin, mask_token
 from app.core.database import db
 from app.models.token import TokenCreate, TokenUpdate, TokenResponse, TokenUsageStats, TiingoToken
 from app.services.token_manager import token_manager
@@ -10,8 +9,8 @@ router = APIRouter(prefix="/tokens", tags=["Token Management"])
 
 
 @router.get("", response_model=List[TokenResponse])
-async def get_all_tokens(current_admin: dict = Depends(get_current_admin)):
-    """Get all tokens with full values"""
+async def get_all_tokens():
+    """Get all tokens with full values (authentication handled by proxy)"""
     tokens = await token_manager.get_all_tokens()
     return [
         TokenResponse(
@@ -32,17 +31,14 @@ async def get_all_tokens(current_admin: dict = Depends(get_current_admin)):
 
 
 @router.get("/stats", response_model=List[TokenUsageStats])
-async def get_token_stats(current_admin: dict = Depends(get_current_admin)):
-    """Get detailed usage statistics for all tokens"""
+async def get_token_stats():
+    """Get detailed usage statistics for all tokens (authentication handled by proxy)"""
     return await token_manager.get_token_stats()
 
 
 @router.post("", response_model=TokenResponse)
-async def create_token(
-    token_data: TokenCreate,
-    current_admin: dict = Depends(get_current_admin),
-):
-    """Add new Tiingo token"""
+async def create_token(token_data: TokenCreate):
+    """Add new Tiingo token (authentication handled by proxy)"""
     # Check if token already exists
     existing_tokens = await token_manager.get_all_tokens()
     if any(t.token == token_data.token for t in existing_tokens):
@@ -77,12 +73,8 @@ async def create_token(
 
 
 @router.patch("/{token_id}", response_model=TokenResponse)
-async def update_token(
-    token_id: str,
-    token_data: TokenUpdate,
-    current_admin: dict = Depends(get_current_admin),
-):
-    """Update token details"""
+async def update_token(token_id: str, token_data: TokenUpdate):
+    """Update token details (authentication handled by proxy)"""
     tokens = await token_manager.get_all_tokens()
     token = next((t for t in tokens if t.id == token_id), None)
     
@@ -136,11 +128,8 @@ async def update_token(
 
 
 @router.delete("/{token_id}")
-async def delete_token(
-    token_id: str,
-    current_admin: dict = Depends(get_current_admin),
-):
-    """Delete token"""
+async def delete_token(token_id: str):
+    """Delete token (authentication handled by proxy)"""
     tokens = await token_manager.get_all_tokens()
     token = next((t for t in tokens if t.id == token_id), None)
     
