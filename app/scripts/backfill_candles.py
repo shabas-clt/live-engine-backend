@@ -73,6 +73,19 @@ async def fetch_tiingo_candles(
                     'token': token,
                 },
             )
+            
+            if response.status_code == 429:
+                print(f"    ⚠️  Rate limit hit (429) - token exhausted")
+                return []
+            
+            if response.status_code == 404:
+                print(f"    ⚠️  No data available (404) - may be future date or unsupported asset")
+                return []
+            
+            if response.status_code >= 400:
+                print(f"    ❌ HTTP error {response.status_code}: {response.text[:100]}")
+                return []
+            
             response.raise_for_status()
             data = response.json()
             
@@ -111,6 +124,9 @@ async def fetch_tiingo_candles(
             
     except httpx.HTTPStatusError as e:
         print(f"    ❌ HTTP error {e.response.status_code}")
+        return []
+    except httpx.TimeoutException:
+        print(f"    ❌ Request timeout")
         return []
     except Exception as e:
         print(f"    ❌ Error: {e}")
@@ -202,17 +218,30 @@ async def backfill_asset_interval(
     while current_start < end_date:
         current_end = min(current_start + timedelta(days=batch_days), end_date)
         
-        token_obj = await token_manager.get_next_token()
-        if not token_obj:
-            print(f"    ⚠️  No tokens available, waiting...")
-            await asyncio.sleep(60)
-            continue
+        max_retries = 3
+        retry_count = 0
+        candles = []
         
-        print(f"  Fetching {current_start.date()} to {current_end.date()} with {token_obj.name}...")
-        
-        candles = await fetch_tiingo_candles(
-            asset, interval, current_start, current_end, token_obj.token
-        )
+        while retry_count < max_retries:
+            token_obj = await token_manager.get_next_token()
+            if not token_obj:
+                print(f"    ⚠️  No tokens available, waiting 60s...")
+                await asyncio.sleep(60)
+                continue
+            
+            print(f"  Fetching {current_start.date()} to {current_end.date()} with {token_obj.name}...")
+            
+            candles = await fetch_tiingo_candles(
+                asset, interval, current_start, current_end, token_obj.token
+            )
+            
+            if candles:
+                break
+            
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"    🔄 Retry {retry_count}/{max_retries}...")
+                await asyncio.sleep(2)
         
         if candles:
             if interval in ['1s', '5s', '10s', '15s', '30s']:
@@ -222,10 +251,10 @@ async def backfill_asset_interval(
             total_stored += stored
             print(f"    ✅ Stored {stored} candles")
         else:
-            print(f"    ⚠️  No data returned")
+            print(f"    ⚠️  No data after {max_retries} retries, skipping batch")
         
         current_start = current_end
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
     
     return total_stored
 
@@ -239,12 +268,16 @@ async def backfill_candles(days: int = 30, start_date: datetime = None, end_date
     if start_date and end_date:
         print(f"\nBackfilling from {start_date.date()} to {end_date.date()}...")
     else:
-        end_date = datetime.utcnow()
+        end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         print(f"\nBackfilling last {days} days...")
         print(f"From: {start_date.date()}")
         print(f"To:   {end_date.date()}")
     
+    print()
+    print("⚠️  NOTE: Tiingo may not support sub-minute historical data.")
+    print("    Sub-minute intervals (1s, 5s, 10s, 15s, 30s) will be")
+    print("    approximated from 1-minute data.")
     print()
     
     await db.connect()
