@@ -11,13 +11,13 @@ router = APIRouter(prefix="/tokens", tags=["Token Management"])
 
 @router.get("", response_model=List[TokenResponse])
 async def get_all_tokens(current_admin: dict = Depends(get_current_admin)):
-    """Get all tokens with masked values"""
+    """Get all tokens with full values"""
     tokens = await token_manager.get_all_tokens()
     return [
         TokenResponse(
             id=token.id,
             name=token.name,
-            token=mask_token(token.token),
+            token=token.token,  # Return full token
             description=token.description,
             status=token.status,
             assigned_to=token.assigned_to,
@@ -51,12 +51,12 @@ async def create_token(
             detail="Token already exists",
         )
     
-    # Create token
+    # Create token (auto-assign will be handled by token_manager)
     token = TiingoToken(
         token=token_data.token,
         name=token_data.name,
         description=token_data.description,
-        assigned_to=token_data.assigned_to,
+        assigned_to=None,  # Let system auto-assign
     )
     
     token = await token_manager.add_token(token)
@@ -64,7 +64,7 @@ async def create_token(
     return TokenResponse(
         id=token.id,
         name=token.name,
-        token=mask_token(token.token),
+        token=token.token,  # Return full token
         description=token.description,
         status=token.status,
         assigned_to=token.assigned_to,
@@ -123,7 +123,7 @@ async def update_token(
     return TokenResponse(
         id=updated_token.id,
         name=updated_token.name,
-        token=mask_token(updated_token.token),
+        token=updated_token.token,  # Return full token
         description=updated_token.description,
         status=updated_token.status,
         assigned_to=updated_token.assigned_to,

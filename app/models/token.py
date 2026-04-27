@@ -47,14 +47,12 @@ class TokenCreate(BaseModel):
     token: str
     name: str
     description: Optional[str] = None
-    assigned_to: Optional[str] = None
 
 
 class TokenUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[TokenStatus] = None
-    assigned_to: Optional[str] = None
 
 
 class TokenUsageStats(BaseModel):
