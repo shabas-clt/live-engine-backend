@@ -16,10 +16,13 @@ class Settings(BaseSettings):
     TIMESCALEDB_PASSWORD: str = ""
     TIMESCALEDB_DATABASE: str = "live_engine"
 
+    # MongoDB (for admin authentication - shared with funfin-backend)
+    MONGODB_URI: str = ""
+
     # Redis
     REDIS_URL: str = ""
 
-    # JWT Auth
+    # JWT Auth (must match funfin-backend JWT_SECRET)
     JWT_SECRET: str
     JWT_EXPIRES_IN: str = "24h"
 
