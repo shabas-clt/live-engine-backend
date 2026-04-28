@@ -1,12 +1,21 @@
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from app.core.database import db
 
 router = APIRouter(tags=["Candles"])
 logger = logging.getLogger(__name__)
+
+
+def _to_utc_iso(value: datetime | None) -> str | None:
+    """Serialize timestamps as valid UTC ISO strings."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @router.get("/candles")
@@ -74,7 +83,7 @@ async def get_candles(
         
         candles = [
             {
-                "time": row['time'].isoformat() + 'Z',
+                "time": _to_utc_iso(row['time']),
                 "open": float(row['open']),
                 "high": float(row['high']),
                 "low": float(row['low']),
@@ -114,7 +123,7 @@ async def get_latest_candle(
             raise HTTPException(status_code=404, detail="No candles found")
         
         return {
-            "time": row['time'].isoformat() + 'Z',
+            "time": _to_utc_iso(row['time']),
             "open": float(row['open']),
             "high": float(row['high']),
             "low": float(row['low']),
@@ -154,8 +163,8 @@ async def get_candle_stats():
                 "asset": row['asset'],
                 "interval": row['interval'],
                 "count": int(row['count']),
-                "earliest": row['earliest'].isoformat() + 'Z' if row['earliest'] else None,
-                "latest": row['latest'].isoformat() + 'Z' if row['latest'] else None,
+                "earliest": _to_utc_iso(row['earliest']),
+                "latest": _to_utc_iso(row['latest']),
             }
             for row in rows
         ]
