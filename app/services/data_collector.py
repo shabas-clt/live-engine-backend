@@ -1,7 +1,8 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from typing import Optional, Dict, Set, List
 import websockets
 import httpx
@@ -14,28 +15,31 @@ logger = logging.getLogger(__name__)
 
 
 class DataCollector:
-    """Collects real-time data from Tiingo using multiple tokens - optimized"""
+    """Collects real-time data from Tiingo using multiple tokens.
+
+    Ticks are:
+    1. Fed directly to CandleAggregator for in-memory candle building
+    2. Buffered and batch-inserted to TimescaleDB for historical storage
+    3. Broadcast to connected WebSocket subscribers
+    """
 
     def __init__(self):
         self._running = False
         self._tasks: list[asyncio.Task] = []
-        self._subscribers: Dict[str, Set] = {}  # asset -> set of websockets
+        self._subscribers: Dict[str, Set] = {}
         self._lock = asyncio.Lock()
-        
-        # Performance optimizations: Batch tick storage
+
         self._tick_buffer: List[tuple] = []
         self._buffer_lock = asyncio.Lock()
         self._flush_task: Optional[asyncio.Task] = None
 
     async def start(self):
-        """Start data collection with optimizations"""
         if self._running:
             return
 
         self._running = True
-        logger.info("🚀 Starting optimized data collector...")
+        logger.info("Starting data collector...")
 
-        # Start collection tasks
         if settings.COLLECT_BTC:
             self._tasks.append(asyncio.create_task(self._collect_btc()))
 
@@ -45,26 +49,22 @@ class DataCollector:
         if settings.COLLECT_SILVER:
             self._tasks.append(asyncio.create_task(self._collect_silver()))
 
-        # Start batch flush task for tick storage
         self._flush_task = asyncio.create_task(self._flush_ticks_loop())
 
-        logger.info(f"✅ Started {len(self._tasks)} collection tasks with batch storage")
+        logger.info(f"Started {len(self._tasks)} collection tasks")
 
     async def stop(self):
-        """Stop data collection"""
         self._running = False
-        
-        # Cancel flush task
+
         if self._flush_task:
             self._flush_task.cancel()
             try:
                 await self._flush_task
             except asyncio.CancelledError:
                 pass
-        
-        # Flush remaining ticks before stopping
+
         await self._flush_ticks()
-        
+
         for task in [*self._tasks]:
             if task:
                 task.cancel()
@@ -73,10 +73,9 @@ class DataCollector:
                 except asyncio.CancelledError:
                     pass
         self._tasks = []
-        logger.info("⏹️  Stopped data collector")
+        logger.info("Stopped data collector")
 
     async def subscribe(self, websocket, asset: str):
-        """Subscribe websocket to asset updates"""
         async with self._lock:
             if asset not in self._subscribers:
                 self._subscribers[asset] = set()
@@ -84,7 +83,6 @@ class DataCollector:
             logger.info(f"Client subscribed to {asset}")
 
     async def unsubscribe(self, websocket, asset: str):
-        """Unsubscribe websocket from asset updates"""
         async with self._lock:
             if asset in self._subscribers:
                 self._subscribers[asset].discard(websocket)
@@ -92,22 +90,17 @@ class DataCollector:
                     del self._subscribers[asset]
 
     async def _broadcast(self, asset: str, data: dict):
-        """Broadcast data to all subscribers - optimized with parallel sends"""
         async with self._lock:
             subscribers = self._subscribers.get(asset, set()).copy()
 
         if not subscribers:
             return
 
-        # Serialize ONCE for all subscribers (not per subscriber)
         message = json.dumps(data)
-        
-        # Send to all clients concurrently with timeout
         tasks = [self._send_safe(ws, message, asset) for ws in subscribers]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _send_safe(self, ws, message: str, asset: str):
-        """Non-blocking send with timeout - prevents slow clients from blocking"""
         try:
             await asyncio.wait_for(ws.send_text(message), timeout=0.1)
         except asyncio.TimeoutError:
@@ -116,8 +109,13 @@ class DataCollector:
         except Exception:
             await self.unsubscribe(ws, asset)
 
+    def _process_tick(self, asset: str, price: float, volume: float, ts: datetime, token_id: str):
+        """Common tick processing: feed to aggregator and buffer for DB storage."""
+        # Lazy import to avoid circular dependency at module load time
+        from app.services.candle_aggregator import candle_aggregator
+        candle_aggregator.ingest_tick(asset, price, volume, ts)
+
     async def _collect_btc(self):
-        """Collect Bitcoin data via WebSocket"""
         asset = "bitcoin"
         ticker = "btcusd"
         backoff = 2.0
@@ -139,7 +137,7 @@ class DataCollector:
                             "eventData": {"tickers": [ticker]},
                         })
                     )
-                    logger.info(f"✅ Connected to Tiingo crypto stream (BTC) with {token_obj.name}")
+                    logger.info(f"Connected to Tiingo crypto stream (BTC) with {token_obj.name}")
                     backoff = 2.0
 
                     while self._running:
@@ -153,16 +151,13 @@ class DataCollector:
                         if len(data) < 6:
                             continue
 
-                        # Format: ["T", "btcusd", ts, exchange, size, price]
                         ts_raw = data[2]
                         price = float(data[5])
                         volume = float(data[4]) if len(data) > 4 else 0
-                        ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+                        ts = self._parse_timestamp(ts_raw)
 
-                        # Store in TimescaleDB
+                        self._process_tick(asset, price, volume, ts, token_obj.id)
                         await self._store_tick(asset, price, volume, ts, token_obj.id)
-
-                        # Broadcast to subscribers
                         await self._broadcast(asset, {
                             "type": "tick",
                             "asset": asset,
@@ -179,15 +174,12 @@ class DataCollector:
                 backoff = min(backoff * 2, 30)
 
     async def _collect_gold(self):
-        """Collect Gold data via WebSocket"""
         await self._collect_fx("gold", "xauusd")
 
     async def _collect_silver(self):
-        """Collect Silver data via WebSocket"""
         await self._collect_fx("silver", "xagusd")
 
     async def _collect_fx(self, asset: str, ticker: str):
-        """Collect FX data (Gold/Silver) via WebSocket"""
         backoff = 2.0
 
         while self._running:
@@ -207,7 +199,7 @@ class DataCollector:
                             "eventData": {"tickers": [ticker]},
                         })
                     )
-                    logger.info(f"✅ Connected to Tiingo FX stream ({asset.upper()}) with {token_obj.name}")
+                    logger.info(f"Connected to Tiingo FX stream ({asset.upper()}) with {token_obj.name}")
                     backoff = 2.0
 
                     while self._running:
@@ -221,15 +213,17 @@ class DataCollector:
                         if len(data) < 6:
                             continue
 
-                        # Format: ["Q", "xauusd", ts, bidSize, bidPrice, midPrice, askSize, askPrice]
                         ts_raw = data[2]
-                        price = float(data[5] or data[4] or data[7])  # mid, bid, or ask
-                        ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+                        # FX format: ["Q", ticker, ts, bidSize, bidPrice, midPrice, askSize, askPrice]
+                        # Use midPrice if available, fallback to bidPrice, then askPrice
+                        mid = data[5]
+                        bid = data[4]
+                        ask = data[7] if len(data) > 7 else None
+                        price = float(mid) if mid is not None else float(bid) if bid is not None else float(ask)
+                        ts = self._parse_timestamp(ts_raw)
 
-                        # Store in TimescaleDB
+                        self._process_tick(asset, price, 0, ts, token_obj.id)
                         await self._store_tick(asset, price, 0, ts, token_obj.id)
-
-                        # Broadcast to subscribers
                         await self._broadcast(asset, {
                             "type": "tick",
                             "asset": asset,
@@ -245,44 +239,53 @@ class DataCollector:
                 backoff = min(backoff * 2, 30)
 
     async def _flush_ticks_loop(self):
-        """Flush tick buffer every 5 seconds - 5000x fewer DB operations"""
         while self._running:
             await asyncio.sleep(5)
             await self._flush_ticks()
 
     async def _flush_ticks(self):
-        """Batch insert all buffered ticks using PostgreSQL COPY"""
         async with self._buffer_lock:
             if not self._tick_buffer:
                 return
-            
             ticks = self._tick_buffer.copy()
             self._tick_buffer.clear()
-        
+
         try:
             async with db.pool.acquire() as conn:
-                # PostgreSQL COPY is 100x faster than individual INSERTs
                 await conn.copy_records_to_table(
                     'ticks',
                     records=ticks,
                     columns=['time', 'asset', 'price', 'volume', 'source', 'token_id']
                 )
-            logger.debug(f"✅ Flushed {len(ticks)} ticks to DB")
+            logger.debug(f"Flushed {len(ticks)} ticks to DB")
         except Exception as e:
             logger.error(f"Failed to flush ticks: {e}")
 
     async def _store_tick(self, asset: str, price: float, volume: float, ts: datetime, token_id: str):
-        """Buffer tick for batch insert - optimized storage"""
         if not settings.STORE_RAW_TICKS:
             return
 
+        tid = uuid.UUID(token_id) if token_id else None
+
         async with self._buffer_lock:
-            self._tick_buffer.append((ts, asset, price, volume, "tiingo", token_id))
-            
-            # Flush if buffer too large (prevent memory overflow)
+            self._tick_buffer.append((ts, asset, price, volume, "tiingo", tid))
+
             if len(self._tick_buffer) >= 1000:
                 asyncio.create_task(self._flush_ticks())
 
+    @staticmethod
+    def _parse_timestamp(ts_raw) -> datetime:
+        """Parse Tiingo timestamp to naive UTC datetime.
 
-# Global data collector instance
+        TimescaleDB columns are TIMESTAMPTZ. We store naive datetimes but
+        the server must run in UTC (enforced by PostgreSQL timezone setting).
+        """
+        raw = str(ts_raw).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(raw)
+        # Convert to UTC and strip tzinfo so all stored values are naive-UTC
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+
 data_collector = DataCollector()
