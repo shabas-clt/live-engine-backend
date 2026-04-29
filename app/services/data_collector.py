@@ -142,6 +142,11 @@ class DataCollector:
 
                     while self._running:
                         raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                        
+                        # Measure bandwidth usage
+                        message_size_bytes = len(raw.encode('utf-8'))
+                        message_size_kb = message_size_bytes / 1024.0
+                        
                         payload = json.loads(raw)
 
                         if payload.get("messageType") != "A":
@@ -158,6 +163,10 @@ class DataCollector:
 
                         self._process_tick(asset, price, volume, ts, token_obj.id)
                         await self._store_tick(asset, price, volume, ts, token_obj.id)
+                        
+                        # Record bandwidth usage for this message (don't increment request counter)
+                        await token_manager._record_usage(token_obj, bandwidth_kb=message_size_kb, increment_requests=False)
+                        
                         await self._broadcast(asset, {
                             "type": "tick",
                             "asset": asset,
@@ -204,6 +213,11 @@ class DataCollector:
 
                     while self._running:
                         raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                        
+                        # Measure bandwidth usage
+                        message_size_bytes = len(raw.encode('utf-8'))
+                        message_size_kb = message_size_bytes / 1024.0
+                        
                         payload = json.loads(raw)
 
                         if payload.get("messageType") != "A":
@@ -224,6 +238,10 @@ class DataCollector:
 
                         self._process_tick(asset, price, 0, ts, token_obj.id)
                         await self._store_tick(asset, price, 0, ts, token_obj.id)
+                        
+                        # Record bandwidth usage for this message (don't increment request counter)
+                        await token_manager._record_usage(token_obj, bandwidth_kb=message_size_kb, increment_requests=False)
+                        
                         await self._broadcast(asset, {
                             "type": "tick",
                             "asset": asset,

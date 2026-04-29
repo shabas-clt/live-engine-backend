@@ -79,6 +79,7 @@ class TokenManager:
             if preferred_asset and preferred_asset in self._tokens_by_asset:
                 for token in self._tokens_by_asset[preferred_asset]:
                     if token.id in self._healthy_tokens:
+                        self._reset_counters_if_needed(token)
                         await self._record_usage(token)
                         return token
 
@@ -89,11 +90,13 @@ class TokenManager:
                 attempts += 1
 
                 if token.id in self._healthy_tokens:
+                    self._reset_counters_if_needed(token)
                     await self._record_usage(token)
                     return token
                 
                 if self._is_token_healthy(token):
                     self._healthy_tokens.add(token.id)
+                    self._reset_counters_if_needed(token)
                     await self._record_usage(token)
                     return token
 
@@ -101,29 +104,36 @@ class TokenManager:
             return None
 
     def _is_token_healthy(self, token: TiingoToken) -> bool:
-        """Check if token is within limits"""
+        """Check if token is within limits (READ-ONLY - no modifications)"""
         if token.status != TokenStatus.ACTIVE:
             self._healthy_tokens.discard(token.id)
             return False
 
         now = datetime.now(timezone.utc)
         
-        if token.last_reset_hour is None or (now - token.last_reset_hour) >= timedelta(hours=1):
-            token.hourly_requests = 0
-            token.last_reset_hour = now
-
-        if token.last_reset_day is None or (now - token.last_reset_day) >= timedelta(days=1):
-            token.daily_requests = 0
-            token.last_reset_day = now
-
-        if token.last_reset_month is None or (now - token.last_reset_month) >= timedelta(days=30):
-            token.monthly_bandwidth_mb = 0.0
-            token.last_reset_month = now
+        # Calculate if resets are needed, but DON'T modify the token
+        needs_hourly_reset = (
+            token.last_reset_hour is None or 
+            (now - token.last_reset_hour) >= timedelta(hours=1)
+        )
+        needs_daily_reset = (
+            token.last_reset_day is None or 
+            (now - token.last_reset_day) >= timedelta(days=1)
+        )
+        needs_monthly_reset = (
+            token.last_reset_month is None or 
+            (now - token.last_reset_month) >= timedelta(days=30)
+        )
+        
+        # Use effective values (0 if reset needed, otherwise current value)
+        effective_hourly = 0 if needs_hourly_reset else token.hourly_requests
+        effective_daily = 0 if needs_daily_reset else token.daily_requests
+        effective_monthly = 0.0 if needs_monthly_reset else token.monthly_bandwidth_mb
 
         is_healthy = (
-            token.hourly_requests < token.hourly_limit and
-            token.daily_requests < token.daily_limit and
-            token.monthly_bandwidth_mb < token.monthly_bandwidth_limit_mb
+            effective_hourly < token.hourly_limit and
+            effective_daily < token.daily_limit and
+            effective_monthly < token.monthly_bandwidth_limit_mb
         )
         
         # Update cache
@@ -131,19 +141,43 @@ class TokenManager:
             self._healthy_tokens.add(token.id)
         else:
             self._healthy_tokens.discard(token.id)
-            if token.hourly_requests >= token.hourly_limit:
+            if effective_hourly >= token.hourly_limit:
                 logger.warning(f"Token {token.name} hit hourly limit")
-            elif token.daily_requests >= token.daily_limit:
+            elif effective_daily >= token.daily_limit:
                 logger.warning(f"Token {token.name} hit daily limit")
-            elif token.monthly_bandwidth_mb >= token.monthly_bandwidth_limit_mb:
+            elif effective_monthly >= token.monthly_bandwidth_limit_mb:
                 logger.warning(f"Token {token.name} hit bandwidth limit")
 
         return is_healthy
 
-    async def _record_usage(self, token: TiingoToken, bandwidth_kb: float = 0):
-        """Record token usage"""
-        token.hourly_requests += 1
-        token.daily_requests += 1
+    def _reset_counters_if_needed(self, token: TiingoToken):
+        """Reset counters if time periods elapsed (WRITE operation)"""
+        now = datetime.now(timezone.utc)
+        
+        if token.last_reset_hour is None or (now - token.last_reset_hour) >= timedelta(hours=1):
+            token.hourly_requests = 0
+            token.last_reset_hour = now
+        
+        if token.last_reset_day is None or (now - token.last_reset_day) >= timedelta(days=1):
+            token.daily_requests = 0
+            token.last_reset_day = now
+        
+        if token.last_reset_month is None or (now - token.last_reset_month) >= timedelta(days=30):
+            token.monthly_bandwidth_mb = 0.0
+            token.last_reset_month = now
+
+    async def _record_usage(self, token: TiingoToken, bandwidth_kb: float = 0, increment_requests: bool = True):
+        """Record token usage
+        
+        Args:
+            token: Token to record usage for
+            bandwidth_kb: Bandwidth used in KB
+            increment_requests: Whether to increment request counters (True for API calls, False for WebSocket messages)
+        """
+        if increment_requests:
+            token.hourly_requests += 1
+            token.daily_requests += 1
+        
         token.monthly_bandwidth_mb += bandwidth_kb / 1024.0
         token.last_used = datetime.now(timezone.utc)
 
@@ -261,12 +295,43 @@ class TokenManager:
         return [self._row_to_token(row) for row in tokens_data]
 
     async def get_token_stats(self) -> List[TokenUsageStats]:
-        """Get usage statistics for all tokens"""
-        tokens = await self.get_all_tokens()
-        stats = []
+        """Get usage statistics for all tokens (READ-ONLY - fetches from database)"""
+        # Fetch fresh data from database to avoid modifying in-memory objects
+        async with db.pool.acquire() as conn:
+            tokens_data = await conn.fetch("SELECT * FROM tokens ORDER BY created_at DESC")
         
-        for token in tokens:
-            self._is_token_healthy(token)
+        stats = []
+        now = datetime.now(timezone.utc)
+        
+        for row in tokens_data:
+            token = self._row_to_token(row)
+            
+            # Calculate if resets are needed without modifying the token
+            needs_hourly_reset = (
+                token.last_reset_hour is None or 
+                (now - token.last_reset_hour) >= timedelta(hours=1)
+            )
+            needs_daily_reset = (
+                token.last_reset_day is None or 
+                (now - token.last_reset_day) >= timedelta(days=1)
+            )
+            needs_monthly_reset = (
+                token.last_reset_month is None or 
+                (now - token.last_reset_month) >= timedelta(days=30)
+            )
+            
+            # Use effective values (0 if reset needed, otherwise database value)
+            effective_hourly = 0 if needs_hourly_reset else token.hourly_requests
+            effective_daily = 0 if needs_daily_reset else token.daily_requests
+            effective_monthly = 0.0 if needs_monthly_reset else token.monthly_bandwidth_mb
+            
+            # Calculate health status without side effects
+            is_healthy = (
+                token.status == TokenStatus.ACTIVE and
+                effective_hourly < token.hourly_limit and
+                effective_daily < token.daily_limit and
+                effective_monthly < token.monthly_bandwidth_limit_mb
+            )
             
             stats.append(
                 TokenUsageStats(
@@ -274,18 +339,18 @@ class TokenManager:
                     name=token.name,
                     status=token.status,
                     assigned_to=token.assigned_to,
-                    hourly_requests=token.hourly_requests,
+                    hourly_requests=effective_hourly,
                     hourly_limit=token.hourly_limit,
-                    hourly_percentage=round((token.hourly_requests / token.hourly_limit) * 100, 2),
-                    daily_requests=token.daily_requests,
+                    hourly_percentage=round((effective_hourly / token.hourly_limit) * 100, 2),
+                    daily_requests=effective_daily,
                     daily_limit=token.daily_limit,
-                    daily_percentage=round((token.daily_requests / token.daily_limit) * 100, 2),
-                    monthly_bandwidth_mb=round(token.monthly_bandwidth_mb, 2),
+                    daily_percentage=round((effective_daily / token.daily_limit) * 100, 2),
+                    monthly_bandwidth_mb=round(effective_monthly, 2),
                     monthly_bandwidth_limit_mb=token.monthly_bandwidth_limit_mb,
                     bandwidth_percentage=round(
-                        (token.monthly_bandwidth_mb / token.monthly_bandwidth_limit_mb) * 100, 2
+                        (effective_monthly / token.monthly_bandwidth_limit_mb) * 100, 2
                     ),
-                    is_healthy=self._is_token_healthy(token),
+                    is_healthy=is_healthy,
                     last_used=token.last_used,
                 )
             )
