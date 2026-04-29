@@ -91,12 +91,46 @@ class CandleAggregator:
             self._dirty_keys.add(cache_key)
 
     def get_latest_candles(self, asset: str, interval: str, limit: int = 300) -> List[dict]:
-        """Return recent candles from memory for the REST API."""
+        """Return recent candles from memory, filling gaps with flat carry-forward candles."""
         cache_key = (asset, interval)
         dq = self._candles.get(cache_key)
         if not dq:
             return []
-        return list(dq)[-limit:]
+
+        raw = list(dq)[-limit:]
+        if len(raw) < 2:
+            return raw
+
+        interval_seconds = self.INTERVALS.get(interval, 1)
+        step = timedelta(seconds=interval_seconds)
+
+        filled = [raw[0]]
+        for i in range(1, len(raw)):
+            prev = filled[-1]
+            curr = raw[i]
+            expected_next = prev['time'] + step
+
+            # Fill gaps with flat candles carrying the last close price
+            while expected_next < curr['time']:
+                filled.append({
+                    'time': expected_next,
+                    'asset': asset,
+                    'interval': interval,
+                    'open': prev['close'],
+                    'high': prev['close'],
+                    'low': prev['close'],
+                    'close': prev['close'],
+                    'volume': 0,
+                    'tick_count': 0,
+                })
+                expected_next += step
+                # Safety: don't fill more than 120 gaps to avoid memory issues
+                if len(filled) - len(raw) > 120:
+                    break
+
+            filled.append(curr)
+
+        return filled[-limit:]
 
     async def _persist_loop(self):
         """Persist dirty candles to DB every 5 seconds."""
