@@ -8,6 +8,7 @@ from app.core.database import db
 from app.services.token_manager import token_manager
 from app.services.data_collector import data_collector
 from app.services.stock_collector import stock_collector
+from app.services.indian_stock_collector import indian_stock_collector
 from app.services.candle_aggregator import candle_aggregator
 from app.api import auth, admin, tokens, stream, candles, stocks
 from app.scripts.seed_admin import seed_initial_admin, seed_initial_token
@@ -38,8 +39,11 @@ async def lifespan(app: FastAPI):
     # Start data collection
     await data_collector.start()
     
-    # Start stock collection
+    # Start stock collection (US stocks)
     await stock_collector.start()
+    
+    # Start Indian stock collection
+    await indian_stock_collector.start()
     
     # Start candle aggregation
     await candle_aggregator.start()
@@ -51,6 +55,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("⏹️  Shutting down Live Data Engine...")
     await candle_aggregator.stop()
+    await indian_stock_collector.stop()
     await stock_collector.stop()
     await data_collector.stop()
     await db.disconnect()
@@ -113,7 +118,8 @@ async def health_check():
             "bitcoin": settings.COLLECT_BTC,
             "gold": settings.COLLECT_GOLD,
             "silver": settings.COLLECT_SILVER,
-            "stocks": True,
+            "us_stocks": True,
+            "indian_stocks": True,
         },
     }
 
