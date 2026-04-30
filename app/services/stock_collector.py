@@ -270,8 +270,21 @@ class StockCollector:
 
             except asyncio.CancelledError:
                 raise
+            except asyncio.TimeoutError:
+                market_status = self._get_market_status()
+                if market_status == "closed":
+                    logger.info(f"Stock market is closed. Reconnecting in {backoff}s...")
+                else:
+                    logger.warning(f"Stock stream timeout (market should be open). Reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
             except Exception as e:
-                logger.warning(f"Stock stream error: {e}")
+                market_status = self._get_market_status()
+                error_msg = str(e) if str(e) else "Connection closed by server"
+                if market_status == "closed":
+                    logger.info(f"Stock market is closed ({error_msg}). Reconnecting in {backoff}s...")
+                else:
+                    logger.warning(f"Stock stream error: {error_msg}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
