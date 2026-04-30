@@ -219,22 +219,30 @@ class StockCollector:
                     backoff = 2.0
 
                     while self._running:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                            logger.info(f"[DEBUG] Received message from Tiingo IEX (length: {len(raw)} bytes)")
+                        except asyncio.TimeoutError:
+                            logger.warning("No messages received from Tiingo IEX for 30 seconds (timeout)")
+                            raise
                         
                         # Measure bandwidth usage
                         message_size_bytes = len(raw.encode('utf-8'))
                         message_size_kb = message_size_bytes / 1024.0
                         
                         payload = json.loads(raw)
+                        logger.info(f"[DEBUG] Parsed message: {payload}")
 
                         # Log all message types for debugging
                         msg_type = payload.get("messageType", "unknown")
                         if msg_type == "H":
-                            logger.debug("Received heartbeat from Tiingo IEX")
+                            logger.info("Received heartbeat from Tiingo IEX")
                         elif msg_type == "I":
                             logger.info(f"Tiingo IEX info: {payload}")
-                        elif msg_type != "A":
-                            logger.debug(f"Received non-trade message type: {msg_type}")
+                        elif msg_type == "A":
+                            logger.info(f"Received trade data: {payload}")
+                        else:
+                            logger.info(f"Received message type '{msg_type}': {payload}")
 
                         # IEX message format: messageType "A" for trade data
                         if msg_type != "A":
