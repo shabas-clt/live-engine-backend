@@ -211,7 +211,6 @@ class StockCollector:
                 def on_ticker(ws, msg):
                     """Callback for ticker updates (runs in separate thread)"""
                     try:
-                        logger.info(f"📊 Received US ticker: {msg.get('id', 'unknown')} - price: {msg.get('price', 'N/A')}")
                         # Schedule async processing in main event loop
                         future = asyncio.run_coroutine_threadsafe(
                             self._process_ticker_message(msg),
@@ -282,12 +281,12 @@ class StockCollector:
             ticker = msg.get("id")
             
             if not ticker or ticker not in self.STOCK_TICKERS:
-                logger.info(f"⚠️ Ticker {ticker} not in STOCK_TICKERS list")
+                logger.warning(f"⚠️ Ticker {ticker} not in STOCK_TICKERS list")
                 return
             
             price = msg.get("price")
             if price is None:
-                logger.info(f"⚠️ No price in message for {ticker}")
+                logger.warning(f"⚠️ No price in message for {ticker}")
                 return
             
             price = float(price)
@@ -299,7 +298,6 @@ class StockCollector:
                 self._last_prices[ticker] = price
             
             market_status = self._get_market_status()
-            logger.info(f"✅ Processing {ticker}: ${price:.2f} | Market: {market_status}")
             
             if market_status == "open":
                 self._process_tick(ticker, price, volume, ts)
