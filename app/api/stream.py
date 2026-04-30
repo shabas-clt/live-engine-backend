@@ -107,13 +107,13 @@ async def websocket_stream(
     
     # Check if it's a US stock asset
     elif asset.startswith("stock_"):
-        stock_symbol = asset.replace("stock_", "")
+        stock_symbol = asset.replace("stock_", "").upper()  # Convert to uppercase
         
         # Validate stock symbol
         if stock_symbol not in stock_collector.STOCK_TICKERS:
             await websocket.send_json({
                 "error": f"Invalid US stock symbol: {stock_symbol}",
-                "availableStocks": [f"stock_{s}" for s in stock_collector.STOCK_TICKERS]
+                "availableStocks": [f"stock_{s.lower()}" for s in stock_collector.STOCK_TICKERS]
             })
             await websocket.close()
             return
