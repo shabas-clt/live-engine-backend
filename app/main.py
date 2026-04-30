@@ -7,8 +7,9 @@ from app.core.config import settings
 from app.core.database import db
 from app.services.token_manager import token_manager
 from app.services.data_collector import data_collector
+from app.services.stock_collector import stock_collector
 from app.services.candle_aggregator import candle_aggregator
-from app.api import auth, admin, tokens, stream, candles
+from app.api import auth, admin, tokens, stream, candles, stocks
 from app.scripts.seed_admin import seed_initial_admin, seed_initial_token
 
 # Configure logging
@@ -37,6 +38,9 @@ async def lifespan(app: FastAPI):
     # Start data collection
     await data_collector.start()
     
+    # Start stock collection
+    await stock_collector.start()
+    
     # Start candle aggregation
     await candle_aggregator.start()
     
@@ -47,6 +51,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("⏹️  Shutting down Live Data Engine...")
     await candle_aggregator.stop()
+    await stock_collector.stop()
     await data_collector.stop()
     await db.disconnect()
     logger.info("✅ Shutdown complete")
@@ -75,6 +80,7 @@ app.include_router(admin.router, prefix="/api")
 app.include_router(tokens.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
 app.include_router(candles.router, prefix="/api")
+app.include_router(stocks.router, prefix="/api")
 
 
 @app.get("/")
@@ -107,6 +113,7 @@ async def health_check():
             "bitcoin": settings.COLLECT_BTC,
             "gold": settings.COLLECT_GOLD,
             "silver": settings.COLLECT_SILVER,
+            "stocks": True,
         },
     }
 
