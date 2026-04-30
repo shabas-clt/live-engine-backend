@@ -66,8 +66,6 @@ class StockCollector:
         # Cache for last known prices (used outside market hours)
         self._last_prices: Dict[str, float] = {}
         self._price_lock = asyncio.Lock()
-        
-        self._ws_ticker = None
 
     async def start(self):
         if self._running:
@@ -195,23 +193,69 @@ class StockCollector:
 
     async def _collect_stocks(self):
         """Collect stock data from Yahoo Finance WebSocket"""
+        import threading
+        
         backoff = 2.0
 
         while self._running:
             try:
                 logger.info("Connecting to Yahoo Finance WebSocket for US stocks...")
                 
-                self._ws_ticker = yliveticker.YLiveTicker()
+                # Get event loop for scheduling coroutines from thread
+                loop = asyncio.get_event_loop()
                 
-                for ticker in self.STOCK_TICKERS:
-                    self._ws_ticker.subscribe(ticker)
-                    logger.info(f"Subscribed to {ticker}")
+                # Flag to track if ticker is running
+                ticker_running = threading.Event()
+                ticker_error = None
                 
-                self._ws_ticker.on_ticker = self._on_ticker_sync
+                def on_ticker(ws, msg):
+                    """Callback for ticker updates (runs in separate thread)"""
+                    try:
+                        # Schedule async processing in main event loop
+                        future = asyncio.run_coroutine_threadsafe(
+                            self._process_ticker_message(msg),
+                            loop
+                        )
+                        # Wait for completion with timeout to avoid blocking
+                        future.result(timeout=1.0)
+                    except Exception as e:
+                        logger.error(f"Error processing US ticker: {e}")
                 
-                await asyncio.get_event_loop().run_in_executor(None, self._ws_ticker.start)
+                def run_ticker():
+                    """Run YLiveTicker in separate thread"""
+                    nonlocal ticker_error
+                    try:
+                        ticker_running.set()
+                        yliveticker.YLiveTicker(
+                            on_ticker=on_ticker,
+                            ticker_names=self.STOCK_TICKERS
+                        )
+                    except Exception as e:
+                        ticker_error = e
+                        logger.error(f"YLiveTicker error: {e}")
+                    finally:
+                        ticker_running.clear()
                 
+                # Start YLiveTicker in daemon thread
+                ticker_thread = threading.Thread(target=run_ticker, daemon=True)
+                ticker_thread.start()
+                
+                # Wait for ticker to start
+                ticker_running.wait(timeout=10)
+                
+                if not ticker_running.is_set():
+                    raise Exception("Failed to start YLiveTicker")
+                
+                logger.info("✅ Connected to Yahoo Finance for US stocks")
                 backoff = 2.0
+                
+                # Keep running while ticker thread is alive
+                while self._running and ticker_thread.is_alive():
+                    await asyncio.sleep(1)
+                
+                # Check if thread died due to error
+                if ticker_error:
+                    raise ticker_error
                 
             except asyncio.CancelledError:
                 raise
@@ -224,10 +268,6 @@ class StockCollector:
                     logger.warning(f"US stock stream error: {error_msg}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
-
-    def _on_ticker_sync(self, msg: dict):
-        """Synchronous callback for yliveticker - schedules async processing"""
-        asyncio.create_task(self._process_ticker_message(msg))
 
     async def _process_ticker_message(self, msg: dict):
         """Process incoming ticker message from Yahoo Finance"""
