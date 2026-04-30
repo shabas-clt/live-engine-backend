@@ -227,8 +227,17 @@ class StockCollector:
                         
                         payload = json.loads(raw)
 
+                        # Log all message types for debugging
+                        msg_type = payload.get("messageType", "unknown")
+                        if msg_type == "H":
+                            logger.debug("Received heartbeat from Tiingo IEX")
+                        elif msg_type == "I":
+                            logger.info(f"Tiingo IEX info: {payload}")
+                        elif msg_type != "A":
+                            logger.debug(f"Received non-trade message type: {msg_type}")
+
                         # IEX message format: messageType "A" for trade data
-                        if payload.get("messageType") != "A":
+                        if msg_type != "A":
                             continue
 
                         data = payload.get("data", [])
