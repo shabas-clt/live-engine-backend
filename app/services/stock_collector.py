@@ -211,6 +211,7 @@ class StockCollector:
                 def on_ticker(ws, msg):
                     """Callback for ticker updates (runs in separate thread)"""
                     try:
+                        logger.info(f"📊 Received US ticker: {msg.get('id', 'unknown')} - price: {msg.get('price', 'N/A')}")
                         # Schedule async processing in main event loop
                         future = asyncio.run_coroutine_threadsafe(
                             self._process_ticker_message(msg),
@@ -219,7 +220,7 @@ class StockCollector:
                         # Wait for completion with timeout to avoid blocking
                         future.result(timeout=1.0)
                     except Exception as e:
-                        logger.error(f"Error processing US ticker: {e}")
+                        logger.error(f"Error processing US ticker: {e}", exc_info=True)
                 
                 def run_ticker():
                     """Run YLiveTicker in separate thread"""
@@ -250,8 +251,14 @@ class StockCollector:
                 backoff = 2.0
                 
                 # Keep running while ticker thread is alive
+                tick_count = 0
                 while self._running and ticker_thread.is_alive():
                     await asyncio.sleep(1)
+                    tick_count += 1
+                    if tick_count % 30 == 0:
+                        logger.info(f"US stock ticker thread still alive after {tick_count}s")
+                
+                logger.warning("US stock ticker thread died")
                 
                 # Check if thread died due to error
                 if ticker_error:
@@ -273,11 +280,14 @@ class StockCollector:
         """Process incoming ticker message from Yahoo Finance"""
         try:
             ticker = msg.get("id")
+            
             if not ticker or ticker not in self.STOCK_TICKERS:
+                logger.info(f"⚠️ Ticker {ticker} not in STOCK_TICKERS list")
                 return
             
             price = msg.get("price")
             if price is None:
+                logger.info(f"⚠️ No price in message for {ticker}")
                 return
             
             price = float(price)
@@ -289,6 +299,8 @@ class StockCollector:
                 self._last_prices[ticker] = price
             
             market_status = self._get_market_status()
+            logger.info(f"✅ Processing {ticker}: ${price:.2f} | Market: {market_status}")
+            
             if market_status == "open":
                 self._process_tick(ticker, price, volume, ts)
                 await self._store_tick(ticker, price, volume, ts)
@@ -306,7 +318,7 @@ class StockCollector:
             })
             
         except Exception as e:
-            logger.error(f"Error processing ticker message: {e}")
+            logger.error(f"Error processing ticker message: {e}", exc_info=True)
 
     async def _flush_ticks_loop(self):
         """Periodically flush buffered ticks to database"""
