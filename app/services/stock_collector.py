@@ -4,17 +4,16 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Set, List
-import websockets
+import yliveticker
 
 from app.core.config import settings
 from app.core.database import db
-from app.services.token_manager import token_manager
 
 logger = logging.getLogger(__name__)
 
 
 class StockCollector:
-    """Collects real-time stock data from Tiingo IEX feed.
+    """Collects real-time US stock data from Yahoo Finance WebSocket.
 
     Ticks are:
     1. Fed directly to CandleAggregator for in-memory candle building
@@ -22,36 +21,36 @@ class StockCollector:
     3. Broadcast to connected WebSocket subscribers
     """
 
-    # US Stock tickers to collect
+    # US Stock tickers (Yahoo Finance format)
     STOCK_TICKERS = [
-        "aapl",    # Apple Inc.
-        "googl",   # Alphabet Inc. (Google)
-        "msft",    # Microsoft Corp.
-        "tsla",    # Tesla Inc.
-        "amzn",    # Amazon.com Inc.
-        "meta",    # Meta Platforms Inc. (Facebook)
-        "nvda",    # NVIDIA Corp.
-        "nflx",    # Netflix Inc.
-        "amd",     # Advanced Micro Devices
-        "intc",    # Intel Corp.
-        "dis",     # Walt Disney Co.
-        "ba",      # Boeing Co.
+        "AAPL",    # Apple Inc.
+        "GOOGL",   # Alphabet Inc. (Google)
+        "MSFT",    # Microsoft Corp.
+        "TSLA",    # Tesla Inc.
+        "AMZN",    # Amazon.com Inc.
+        "META",    # Meta Platforms Inc. (Facebook)
+        "NVDA",    # NVIDIA Corp.
+        "NFLX",    # Netflix Inc.
+        "AMD",     # Advanced Micro Devices
+        "INTC",    # Intel Corp.
+        "DIS",     # Walt Disney Co.
+        "BA",      # Boeing Co.
     ]
 
     # Stock metadata
     STOCK_METADATA = {
-        "aapl": {"name": "Apple Inc.", "exchange": "NASDAQ"},
-        "googl": {"name": "Alphabet Inc.", "exchange": "NASDAQ"},
-        "msft": {"name": "Microsoft Corp.", "exchange": "NASDAQ"},
-        "tsla": {"name": "Tesla Inc.", "exchange": "NASDAQ"},
-        "amzn": {"name": "Amazon.com Inc.", "exchange": "NASDAQ"},
-        "meta": {"name": "Meta Platforms Inc.", "exchange": "NASDAQ"},
-        "nvda": {"name": "NVIDIA Corp.", "exchange": "NASDAQ"},
-        "nflx": {"name": "Netflix Inc.", "exchange": "NASDAQ"},
-        "amd": {"name": "Advanced Micro Devices", "exchange": "NASDAQ"},
-        "intc": {"name": "Intel Corp.", "exchange": "NASDAQ"},
-        "dis": {"name": "Walt Disney Co.", "exchange": "NYSE"},
-        "ba": {"name": "Boeing Co.", "exchange": "NYSE"},
+        "AAPL": {"name": "Apple Inc.", "exchange": "NASDAQ", "symbol": "AAPL"},
+        "GOOGL": {"name": "Alphabet Inc.", "exchange": "NASDAQ", "symbol": "GOOGL"},
+        "MSFT": {"name": "Microsoft Corp.", "exchange": "NASDAQ", "symbol": "MSFT"},
+        "TSLA": {"name": "Tesla Inc.", "exchange": "NASDAQ", "symbol": "TSLA"},
+        "AMZN": {"name": "Amazon.com Inc.", "exchange": "NASDAQ", "symbol": "AMZN"},
+        "META": {"name": "Meta Platforms Inc.", "exchange": "NASDAQ", "symbol": "META"},
+        "NVDA": {"name": "NVIDIA Corp.", "exchange": "NASDAQ", "symbol": "NVDA"},
+        "NFLX": {"name": "Netflix Inc.", "exchange": "NASDAQ", "symbol": "NFLX"},
+        "AMD": {"name": "Advanced Micro Devices", "exchange": "NASDAQ", "symbol": "AMD"},
+        "INTC": {"name": "Intel Corp.", "exchange": "NASDAQ", "symbol": "INTC"},
+        "DIS": {"name": "Walt Disney Co.", "exchange": "NYSE", "symbol": "DIS"},
+        "BA": {"name": "Boeing Co.", "exchange": "NYSE", "symbol": "BA"},
     }
 
     def __init__(self):
@@ -67,6 +66,8 @@ class StockCollector:
         # Cache for last known prices (used outside market hours)
         self._last_prices: Dict[str, float] = {}
         self._price_lock = asyncio.Lock()
+        
+        self._ws_ticker = None
 
     async def start(self):
         if self._running:
@@ -185,123 +186,83 @@ class StockCollector:
         except Exception:
             await self.unsubscribe(ws, stock_symbol)
 
-    def _process_tick(self, stock_symbol: str, price: float, volume: float, ts: datetime, token_id: str):
+    def _process_tick(self, stock_symbol: str, price: float, volume: float, ts: datetime):
         """Common tick processing: feed to aggregator and update cache"""
-        # Lazy import to avoid circular dependency
         from app.services.candle_aggregator import candle_aggregator
         
         asset_key = f"stock_{stock_symbol.lower()}"
         candle_aggregator.ingest_tick(asset_key, price, volume, ts)
 
     async def _collect_stocks(self):
-        """Collect stock data from Tiingo IEX feed"""
+        """Collect stock data from Yahoo Finance WebSocket"""
         backoff = 2.0
 
         while self._running:
-            token_obj = await token_manager.get_next_token(preferred_asset="stocks")
-            if not token_obj:
-                logger.error("No token available for stocks")
-                await asyncio.sleep(10)
-                continue
-
             try:
-                ws_url = f"wss://api.tiingo.com/iex?token={token_obj.token}"
-                async with websockets.connect(ws_url, open_timeout=10) as ws:
-                    # Subscribe to all stock tickers
-                    await ws.send(
-                        json.dumps({
-                            "eventName": "subscribe",
-                            "authorization": token_obj.token,
-                            "eventData": {"tickers": self.STOCK_TICKERS},
-                        })
-                    )
-                    logger.info(f"Connected to Tiingo IEX stream with {token_obj.name}")
-                    backoff = 2.0
-
-                    while self._running:
-                        try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=30)
-                            logger.info(f"[DEBUG] Received message from Tiingo IEX (length: {len(raw)} bytes)")
-                        except asyncio.TimeoutError:
-                            logger.warning("No messages received from Tiingo IEX for 30 seconds (timeout)")
-                            raise
-                        
-                        # Measure bandwidth usage
-                        message_size_bytes = len(raw.encode('utf-8'))
-                        message_size_kb = message_size_bytes / 1024.0
-                        
-                        payload = json.loads(raw)
-                        logger.info(f"[DEBUG] Parsed message: {payload}")
-
-                        # Log all message types for debugging
-                        msg_type = payload.get("messageType", "unknown")
-                        if msg_type == "H":
-                            logger.info("Received heartbeat from Tiingo IEX")
-                        elif msg_type == "I":
-                            logger.info(f"Tiingo IEX info: {payload}")
-                        elif msg_type == "A":
-                            logger.info(f"Received trade data: {payload}")
-                        else:
-                            logger.info(f"Received message type '{msg_type}': {payload}")
-
-                        # IEX message format: messageType "A" for trade data
-                        if msg_type != "A":
-                            continue
-
-                        data = payload.get("data", [])
-                        if len(data) < 10:
-                            continue
-
-                        # IEX data format: [type, ticker, timestamp, ..., last_price, last_size, ...]
-                        ticker = data[1].lower()
-                        ts_raw = data[2]
-                        last_price = float(data[9]) if len(data) > 9 else None
-                        last_size = float(data[10]) if len(data) > 10 else 0
-                        
-                        if last_price is None:
-                            continue
-
-                        ts = self._parse_timestamp(ts_raw)
-
-                        async with self._price_lock:
-                            self._last_prices[ticker] = last_price
-
-                        market_status = self._get_market_status()
-                        if market_status == "open":
-                            self._process_tick(ticker, last_price, last_size, ts, token_obj.id)
-                            await self._store_tick(ticker, last_price, last_size, ts, token_obj.id)
-                        
-                        await token_manager._record_usage(token_obj, bandwidth_kb=message_size_kb, increment_requests=False)
-                        
-                        await self._broadcast(ticker, {
-                            "type": "tick",
-                            "asset": f"stock_{ticker}",
-                            "symbol": ticker.upper(),
-                            "price": last_price,
-                            "volume": last_size,
-                            "timestamp": ts.isoformat(),
-                            "marketStatus": market_status,
-                        })
-
+                logger.info("Connecting to Yahoo Finance WebSocket for US stocks...")
+                
+                self._ws_ticker = yliveticker.YLiveTicker()
+                
+                for ticker in self.STOCK_TICKERS:
+                    self._ws_ticker.subscribe(ticker)
+                    logger.info(f"Subscribed to {ticker}")
+                
+                self._ws_ticker.on_ticker = self._process_ticker_message
+                
+                await asyncio.get_event_loop().run_in_executor(None, self._ws_ticker.start)
+                
+                backoff = 2.0
+                
             except asyncio.CancelledError:
                 raise
-            except asyncio.TimeoutError:
-                market_status = self._get_market_status()
-                if market_status == "closed":
-                    logger.info(f"Stock market is closed. Reconnecting in {backoff}s...")
-                else:
-                    logger.warning(f"Stock stream timeout (market should be open). Reconnecting in {backoff}s...")
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30)
             except Exception as e:
                 market_status = self._get_market_status()
-                error_msg = str(e) if str(e) else "Connection closed by server"
+                error_msg = str(e) if str(e) else "Connection closed"
                 if market_status == "closed":
-                    logger.info(f"Stock market is closed ({error_msg}). Reconnecting in {backoff}s...")
+                    logger.info(f"US stock market is closed ({error_msg}). Reconnecting in {backoff}s...")
                 else:
-                    logger.warning(f"Stock stream error: {error_msg}. Reconnecting in {backoff}s...")
+                    logger.warning(f"US stock stream error: {error_msg}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
+
+    async def _process_ticker_message(self, msg: dict):
+        """Process incoming ticker message from Yahoo Finance"""
+        try:
+            ticker = msg.get("id")
+            if not ticker or ticker not in self.STOCK_TICKERS:
+                return
+            
+            price = msg.get("price")
+            if price is None:
+                return
+            
+            price = float(price)
+            volume = float(msg.get("dayVolume", 0))
+            
+            ts = datetime.utcnow()
+            
+            async with self._price_lock:
+                self._last_prices[ticker] = price
+            
+            market_status = self._get_market_status()
+            if market_status == "open":
+                self._process_tick(ticker, price, volume, ts)
+                await self._store_tick(ticker, price, volume, ts)
+            
+            metadata = self.STOCK_METADATA.get(ticker, {})
+            symbol = metadata.get("symbol", ticker)
+            await self._broadcast(ticker, {
+                "type": "tick",
+                "asset": f"stock_{symbol.lower()}",
+                "symbol": symbol,
+                "price": price,
+                "volume": volume,
+                "timestamp": ts.isoformat(),
+                "marketStatus": market_status,
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing ticker message: {e}")
 
     async def _flush_ticks_loop(self):
         """Periodically flush buffered ticks to database"""
@@ -328,26 +289,26 @@ class StockCollector:
         except Exception as e:
             logger.error(f"Failed to flush stock ticks: {e}")
 
-    async def _store_tick(self, ticker: str, price: float, volume: float, ts: datetime, token_id: str):
+    async def _store_tick(self, ticker: str, price: float, volume: float, ts: datetime):
         """Buffer tick for database storage"""
         if not settings.STORE_RAW_TICKS:
             return
 
-        tid = uuid.UUID(token_id) if token_id else None
-        asset_key = f"stock_{ticker}"
+        asset_key = f"stock_{ticker.lower()}"
 
         async with self._buffer_lock:
-            self._tick_buffer.append((ts, asset_key, price, volume, "tiingo_iex", tid))
+            self._tick_buffer.append((ts, asset_key, price, volume, "yahoo_finance", None))
 
             if len(self._tick_buffer) >= 1000:
                 asyncio.create_task(self._flush_ticks())
 
     @staticmethod
     def _parse_timestamp(ts_raw) -> datetime:
-        """Parse Tiingo timestamp to naive UTC datetime"""
+        """Parse timestamp to naive UTC datetime"""
+        if isinstance(ts_raw, datetime):
+            return ts_raw.replace(tzinfo=None) if ts_raw.tzinfo else ts_raw
         raw = str(ts_raw).replace("Z", "+00:00")
         parsed = datetime.fromisoformat(raw)
-        # Convert to UTC and strip tzinfo
         if parsed.tzinfo is not None:
             parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
         return parsed
