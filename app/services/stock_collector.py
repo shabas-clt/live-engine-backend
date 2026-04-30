@@ -124,7 +124,8 @@ class StockCollector:
     async def get_last_price(self, stock_symbol: str) -> Optional[float]:
         """Get last known price for a stock"""
         async with self._price_lock:
-            return self._last_prices.get(stock_symbol.lower())
+            # Try uppercase first (how it's stored), then lowercase for compatibility
+            return self._last_prices.get(stock_symbol) or self._last_prices.get(stock_symbol.upper())
 
     async def get_all_stocks(self) -> List[dict]:
         """Get all available stocks with metadata and last prices"""

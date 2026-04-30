@@ -106,16 +106,17 @@ async def get_stock(symbol: str):
     Parameters:
     - symbol: Stock symbol (e.g., AAPL, RELIANCE, HSBA)
     """
+    symbol_upper = symbol.upper()
     symbol_lower = symbol.lower()
     
     # Check US stocks
-    if symbol_lower in stock_collector.STOCK_TICKERS:
-        metadata = stock_collector.STOCK_METADATA.get(symbol_lower, {})
-        last_price = await stock_collector.get_last_price(symbol_lower)
+    if symbol_upper in stock_collector.STOCK_TICKERS:
+        metadata = stock_collector.STOCK_METADATA.get(symbol_upper, {})
+        last_price = await stock_collector.get_last_price(symbol_upper)
         
         return {
-            "symbol": symbol.upper(),
-            "name": metadata.get("name", symbol.upper()),
+            "symbol": symbol_upper,
+            "name": metadata.get("name", symbol_upper),
             "exchange": metadata.get("exchange", "NASDAQ"),
             "currentPrice": last_price,
             "marketStatus": stock_collector._get_market_status(),
@@ -175,15 +176,16 @@ async def get_stock_price(symbol: str):
     Parameters:
     - symbol: Stock symbol (e.g., AAPL, RELIANCE, HSBA)
     """
+    symbol_upper = symbol.upper()
     symbol_lower = symbol.lower()
     
     # Check US stocks
-    if symbol_lower in stock_collector.STOCK_TICKERS:
-        last_price = await stock_collector.get_last_price(symbol_lower)
+    if symbol_upper in stock_collector.STOCK_TICKERS:
+        last_price = await stock_collector.get_last_price(symbol_upper)
         
         if last_price is None:
             return {
-                "symbol": symbol.upper(),
+                "symbol": symbol_upper,
                 "price": None,
                 "message": "No price data available yet",
                 "marketStatus": stock_collector._get_market_status(),
@@ -191,7 +193,7 @@ async def get_stock_price(symbol: str):
             }
         
         return {
-            "symbol": symbol.upper(),
+            "symbol": symbol_upper,
             "price": last_price,
             "marketStatus": stock_collector._get_market_status(),
             "market": "US"
