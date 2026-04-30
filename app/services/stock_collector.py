@@ -207,7 +207,7 @@ class StockCollector:
                     self._ws_ticker.subscribe(ticker)
                     logger.info(f"Subscribed to {ticker}")
                 
-                self._ws_ticker.on_ticker = self._process_ticker_message
+                self._ws_ticker.on_ticker = self._on_ticker_sync
                 
                 await asyncio.get_event_loop().run_in_executor(None, self._ws_ticker.start)
                 
@@ -224,6 +224,10 @@ class StockCollector:
                     logger.warning(f"US stock stream error: {error_msg}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
+
+    def _on_ticker_sync(self, msg: dict):
+        """Synchronous callback for yliveticker - schedules async processing"""
+        asyncio.create_task(self._process_ticker_message(msg))
 
     async def _process_ticker_message(self, msg: dict):
         """Process incoming ticker message from Yahoo Finance"""
