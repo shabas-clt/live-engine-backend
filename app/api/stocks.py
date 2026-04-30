@@ -4,6 +4,7 @@ import logging
 
 from app.services.stock_collector import stock_collector
 from app.services.indian_stock_collector import indian_stock_collector
+from app.services.uk_stock_collector import uk_stock_collector
 
 router = APIRouter(tags=["Stocks"])
 logger = logging.getLogger(__name__)
@@ -12,22 +13,24 @@ logger = logging.getLogger(__name__)
 @router.get("/stocks")
 async def list_stocks():
     """
-    Get list of all available stocks (US + Indian) with current prices
+    Get list of all available stocks (US + Indian + UK) with current prices
     
     Returns:
     - List of stocks with symbol, name, exchange, current price, and market status
     """
     us_stocks = await stock_collector.get_all_stocks()
     indian_stocks = await indian_stock_collector.get_all_stocks()
+    uk_stocks = await uk_stock_collector.get_all_stocks()
     
-    all_stocks = us_stocks + indian_stocks
+    all_stocks = us_stocks + indian_stocks + uk_stocks
     
     # Determine overall market status
     us_status = us_stocks[0]["marketStatus"] if us_stocks else "unknown"
     indian_status = indian_stocks[0]["marketStatus"] if indian_stocks else "unknown"
+    uk_status = uk_stocks[0]["marketStatus"] if uk_stocks else "unknown"
     
-    # If either market is open, show "open"
-    overall_status = "open" if (us_status == "open" or indian_status == "open") else "closed"
+    # If any market is open, show "open"
+    overall_status = "open" if (us_status == "open" or indian_status == "open" or uk_status == "open") else "closed"
     
     return {
         "stocks": all_stocks,
@@ -36,6 +39,7 @@ async def list_stocks():
         "markets": {
             "us": {"status": us_status, "count": len(us_stocks)},
             "india": {"status": indian_status, "count": len(indian_stocks)},
+            "uk": {"status": uk_status, "count": len(uk_stocks)},
         }
     }
 
@@ -73,6 +77,24 @@ async def list_indian_stocks():
         "total": len(stocks),
         "marketStatus": stocks[0]["marketStatus"] if stocks else "unknown",
         "market": "India"
+    }
+
+
+@router.get("/stocks/uk")
+async def list_uk_stocks():
+    """
+    Get list of UK stocks only
+    
+    Returns:
+    - List of UK stocks with symbol, name, exchange, current price, and market status
+    """
+    stocks = await uk_stock_collector.get_all_stocks()
+    
+    return {
+        "stocks": stocks,
+        "total": len(stocks),
+        "marketStatus": stocks[0]["marketStatus"] if stocks else "unknown",
+        "market": "UK"
     }
 
 

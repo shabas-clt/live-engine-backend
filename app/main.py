@@ -9,6 +9,7 @@ from app.services.token_manager import token_manager
 from app.services.data_collector import data_collector
 from app.services.stock_collector import stock_collector
 from app.services.indian_stock_collector import indian_stock_collector
+from app.services.uk_stock_collector import uk_stock_collector
 from app.services.candle_aggregator import candle_aggregator
 from app.api import auth, admin, tokens, stream, candles, stocks
 from app.scripts.seed_admin import seed_initial_admin, seed_initial_token
@@ -45,6 +46,9 @@ async def lifespan(app: FastAPI):
     # Start Indian stock collection
     await indian_stock_collector.start()
     
+    # Start UK stock collection
+    await uk_stock_collector.start()
+    
     # Start candle aggregation
     await candle_aggregator.start()
     
@@ -55,6 +59,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("⏹️  Shutting down Live Data Engine...")
     await candle_aggregator.stop()
+    await uk_stock_collector.stop()
     await indian_stock_collector.stop()
     await stock_collector.stop()
     await data_collector.stop()
@@ -120,6 +125,7 @@ async def health_check():
             "silver": settings.COLLECT_SILVER,
             "us_stocks": True,
             "indian_stocks": True,
+            "uk_stocks": True,
         },
     }
 
