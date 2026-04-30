@@ -197,34 +197,69 @@ class IndianStockCollector:
 
     async def _collect_stocks(self):
         """Collect stock data from Yahoo Finance WebSocket"""
+        import threading
+        
         backoff = 2.0
 
         while self._running:
             try:
                 logger.info(f"Connecting to Yahoo Finance WebSocket for Indian stocks...")
                 
-                # Create event loop for yliveticker
+                # Get event loop for scheduling coroutines from thread
                 loop = asyncio.get_event_loop()
                 
+                # Flag to track if ticker is running
+                ticker_running = threading.Event()
+                ticker_error = None
+                
                 def on_ticker(ws, msg):
-                    """Callback for ticker updates"""
+                    """Callback for ticker updates (runs in separate thread)"""
                     try:
-                        # Schedule async processing
-                        asyncio.run_coroutine_threadsafe(
+                        # Schedule async processing in main event loop
+                        future = asyncio.run_coroutine_threadsafe(
                             self._process_ticker_message(msg),
                             loop
                         )
+                        # Wait for completion with timeout to avoid blocking
+                        future.result(timeout=1.0)
                     except Exception as e:
-                        logger.error(f"Error processing ticker: {e}")
+                        logger.error(f"Error processing Indian ticker: {e}")
                 
-                # Start Yahoo Finance WebSocket in thread
-                await loop.run_in_executor(
-                    None,
-                    lambda: yliveticker.YLiveTicker(
-                        on_ticker=on_ticker,
-                        ticker_names=self.STOCK_TICKERS
-                    )
-                )
+                def run_ticker():
+                    """Run YLiveTicker in separate thread"""
+                    nonlocal ticker_error
+                    try:
+                        ticker_running.set()
+                        yliveticker.YLiveTicker(
+                            on_ticker=on_ticker,
+                            ticker_names=self.STOCK_TICKERS
+                        )
+                    except Exception as e:
+                        ticker_error = e
+                        logger.error(f"YLiveTicker error: {e}")
+                    finally:
+                        ticker_running.clear()
+                
+                # Start YLiveTicker in daemon thread
+                ticker_thread = threading.Thread(target=run_ticker, daemon=True)
+                ticker_thread.start()
+                
+                # Wait for ticker to start
+                ticker_running.wait(timeout=10)
+                
+                if not ticker_running.is_set():
+                    raise Exception("Failed to start YLiveTicker")
+                
+                logger.info("✅ Connected to Yahoo Finance for Indian stocks")
+                backoff = 2.0
+                
+                # Keep running while ticker thread is alive
+                while self._running and ticker_thread.is_alive():
+                    await asyncio.sleep(1)
+                
+                # Check if thread died due to error
+                if ticker_error:
+                    raise ticker_error
                 
             except asyncio.CancelledError:
                 raise
