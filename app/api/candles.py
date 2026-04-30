@@ -21,7 +21,7 @@ def _to_utc_iso(value: datetime | None) -> str | None:
 
 @router.get("/candles")
 async def get_candles(
-    asset: str = Query(..., regex="^(bitcoin|gold|silver|stock_[a-z]+|indian_stock_[a-z]+)$", description="Asset name (bitcoin, gold, silver, stock_aapl, indian_stock_reliance, etc.)"),
+    asset: str = Query(..., regex="^(bitcoin|gold|silver|stock_[a-z]+|indian_stock_[a-z]+|uk_stock_[a-z]+)$", description="Asset name (bitcoin, gold, silver, stock_aapl, indian_stock_reliance, uk_stock_hsba, etc.)"),
     interval: str = Query(..., regex="^(1s|5s|10s|15s|30s|1m|5m|15m)$", description="Candle interval"),
     limit: int = Query(300, ge=1, le=1000, description="Number of candles to return"),
     start_time: Optional[str] = Query(None, description="Start time (ISO format)"),
@@ -130,7 +130,7 @@ async def _get_candles_from_db(
 
 @router.get("/candles/latest")
 async def get_latest_candle(
-    asset: str = Query(..., regex="^(bitcoin|gold|silver|stock_[a-z]+)$", description="Asset name (bitcoin, gold, silver, stock_aapl, etc.)"),
+    asset: str = Query(..., regex="^(bitcoin|gold|silver|stock_[a-z]+|indian_stock_[a-z]+|uk_stock_[a-z]+)$", description="Asset name (bitcoin, gold, silver, stock_aapl, indian_stock_reliance, uk_stock_hsba, etc.)"),
     interval: str = Query(..., regex="^(1s|5s|10s|15s|30s|1m|5m|15m)$"),
 ):
     """Get the most recent candle for an asset and interval."""
