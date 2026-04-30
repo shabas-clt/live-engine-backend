@@ -287,18 +287,16 @@ class IndianStockCollector:
             price = float(price)
             volume = float(msg.get("dayVolume", 0))
             
-            # Use current time as timestamp
             ts = datetime.utcnow()
             
-            # Update last known price
             async with self._price_lock:
                 self._last_prices[ticker] = price
             
-            # Process tick
-            self._process_tick(ticker, price, volume, ts)
-            await self._store_tick(ticker, price, volume, ts)
+            market_status = self._get_market_status()
+            if market_status == "open":
+                self._process_tick(ticker, price, volume, ts)
+                await self._store_tick(ticker, price, volume, ts)
             
-            # Broadcast to subscribers
             metadata = self.STOCK_METADATA.get(ticker, {})
             symbol = metadata.get("symbol", ticker.replace(".NS", ""))
             await self._broadcast(ticker, {
@@ -308,7 +306,7 @@ class IndianStockCollector:
                 "price": price,
                 "volume": volume,
                 "timestamp": ts.isoformat(),
-                "marketStatus": self._get_market_status(),
+                "marketStatus": market_status,
             })
             
         except Exception as e:

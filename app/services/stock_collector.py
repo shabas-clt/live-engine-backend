@@ -263,18 +263,16 @@ class StockCollector:
 
                         ts = self._parse_timestamp(ts_raw)
 
-                        # Update last known price
                         async with self._price_lock:
                             self._last_prices[ticker] = last_price
 
-                        # Process tick
-                        self._process_tick(ticker, last_price, last_size, ts, token_obj.id)
-                        await self._store_tick(ticker, last_price, last_size, ts, token_obj.id)
+                        market_status = self._get_market_status()
+                        if market_status == "open":
+                            self._process_tick(ticker, last_price, last_size, ts, token_obj.id)
+                            await self._store_tick(ticker, last_price, last_size, ts, token_obj.id)
                         
-                        # Record bandwidth usage
                         await token_manager._record_usage(token_obj, bandwidth_kb=message_size_kb, increment_requests=False)
                         
-                        # Broadcast to subscribers
                         await self._broadcast(ticker, {
                             "type": "tick",
                             "asset": f"stock_{ticker}",
@@ -282,7 +280,7 @@ class StockCollector:
                             "price": last_price,
                             "volume": last_size,
                             "timestamp": ts.isoformat(),
-                            "marketStatus": self._get_market_status(),
+                            "marketStatus": market_status,
                         })
 
             except asyncio.CancelledError:
