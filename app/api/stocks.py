@@ -101,64 +101,147 @@ async def list_uk_stocks():
 @router.get("/stocks/{symbol}")
 async def get_stock(symbol: str):
     """
-    Get details for a specific stock
+    Get details for a specific stock (US, Indian, or UK)
     
     Parameters:
-    - symbol: Stock symbol (e.g., AAPL, GOOGL, MSFT)
+    - symbol: Stock symbol (e.g., AAPL, RELIANCE, HSBA)
     """
     symbol_lower = symbol.lower()
     
-    # Check if stock exists
-    if symbol_lower not in stock_collector.STOCK_TICKERS:
+    # Check US stocks
+    if symbol_lower in stock_collector.STOCK_TICKERS:
+        metadata = stock_collector.STOCK_METADATA.get(symbol_lower, {})
+        last_price = await stock_collector.get_last_price(symbol_lower)
+        
         return {
-            "error": "Stock not found",
-            "availableStocks": [s.upper() for s in stock_collector.STOCK_TICKERS]
+            "symbol": symbol.upper(),
+            "name": metadata.get("name", symbol.upper()),
+            "exchange": metadata.get("exchange", "NASDAQ"),
+            "currentPrice": last_price,
+            "marketStatus": stock_collector._get_market_status(),
+            "market": "US"
         }
     
-    # Get metadata
-    metadata = stock_collector.STOCK_METADATA.get(symbol_lower, {})
+    # Check Indian stocks
+    indian_ticker_map = {meta["symbol"].lower(): ticker for ticker, meta in indian_stock_collector.STOCK_METADATA.items()}
+    if symbol_lower in indian_ticker_map:
+        ticker = indian_ticker_map[symbol_lower]
+        metadata = indian_stock_collector.STOCK_METADATA.get(ticker, {})
+        last_price = await indian_stock_collector.get_last_price(ticker)
+        
+        return {
+            "symbol": symbol.upper(),
+            "name": metadata.get("name", symbol.upper()),
+            "exchange": metadata.get("exchange", "NSE"),
+            "currentPrice": last_price,
+            "marketStatus": indian_stock_collector._get_market_status(),
+            "market": "India"
+        }
     
-    # Get last price
-    last_price = await stock_collector.get_last_price(symbol_lower)
+    # Check UK stocks
+    uk_ticker_map = {meta["symbol"].lower(): ticker for ticker, meta in uk_stock_collector.STOCK_METADATA.items()}
+    if symbol_lower in uk_ticker_map:
+        ticker = uk_ticker_map[symbol_lower]
+        metadata = uk_stock_collector.STOCK_METADATA.get(ticker, {})
+        last_price = await uk_stock_collector.get_last_price(ticker)
+        
+        return {
+            "symbol": symbol.upper(),
+            "name": metadata.get("name", symbol.upper()),
+            "exchange": metadata.get("exchange", "LSE"),
+            "currentPrice": last_price,
+            "marketStatus": uk_stock_collector._get_market_status(),
+            "market": "UK"
+        }
+    
+    # Stock not found
+    all_symbols = (
+        [s.upper() for s in stock_collector.STOCK_TICKERS] +
+        [s.upper() for s in indian_ticker_map.keys()] +
+        [s.upper() for s in uk_ticker_map.keys()]
+    )
     
     return {
-        "symbol": symbol.upper(),
-        "name": metadata.get("name", symbol.upper()),
-        "exchange": metadata.get("exchange", "NASDAQ"),
-        "currentPrice": last_price,
-        "marketStatus": stock_collector._get_market_status(),
+        "error": "Stock not found",
+        "availableStocks": all_symbols
     }
 
 
 @router.get("/stocks/{symbol}/price")
 async def get_stock_price(symbol: str):
     """
-    Get current price for a specific stock
+    Get current price for a specific stock (US, Indian, or UK)
     
     Parameters:
-    - symbol: Stock symbol (e.g., AAPL, GOOGL, MSFT)
+    - symbol: Stock symbol (e.g., AAPL, RELIANCE, HSBA)
     """
     symbol_lower = symbol.lower()
     
-    # Check if stock exists
-    if symbol_lower not in stock_collector.STOCK_TICKERS:
-        return {
-            "error": "Stock not found"
-        }
-    
-    # Get last price
-    last_price = await stock_collector.get_last_price(symbol_lower)
-    
-    if last_price is None:
+    # Check US stocks
+    if symbol_lower in stock_collector.STOCK_TICKERS:
+        last_price = await stock_collector.get_last_price(symbol_lower)
+        
+        if last_price is None:
+            return {
+                "symbol": symbol.upper(),
+                "price": None,
+                "message": "No price data available yet",
+                "marketStatus": stock_collector._get_market_status(),
+                "market": "US"
+            }
+        
         return {
             "symbol": symbol.upper(),
-            "price": None,
-            "message": "No price data available yet",
+            "price": last_price,
             "marketStatus": stock_collector._get_market_status(),
+            "market": "US"
         }
     
+    # Check Indian stocks
+    indian_ticker_map = {meta["symbol"].lower(): ticker for ticker, meta in indian_stock_collector.STOCK_METADATA.items()}
+    if symbol_lower in indian_ticker_map:
+        ticker = indian_ticker_map[symbol_lower]
+        last_price = await indian_stock_collector.get_last_price(ticker)
+        
+        if last_price is None:
+            return {
+                "symbol": symbol.upper(),
+                "price": None,
+                "message": "No price data available yet",
+                "marketStatus": indian_stock_collector._get_market_status(),
+                "market": "India"
+            }
+        
+        return {
+            "symbol": symbol.upper(),
+            "price": last_price,
+            "marketStatus": indian_stock_collector._get_market_status(),
+            "market": "India"
+        }
+    
+    # Check UK stocks
+    uk_ticker_map = {meta["symbol"].lower(): ticker for ticker, meta in uk_stock_collector.STOCK_METADATA.items()}
+    if symbol_lower in uk_ticker_map:
+        ticker = uk_ticker_map[symbol_lower]
+        last_price = await uk_stock_collector.get_last_price(ticker)
+        
+        if last_price is None:
+            return {
+                "symbol": symbol.upper(),
+                "price": None,
+                "message": "No price data available yet",
+                "marketStatus": uk_stock_collector._get_market_status(),
+                "market": "UK"
+            }
+        
+        return {
+            "symbol": symbol.upper(),
+            "price": last_price,
+            "marketStatus": uk_stock_collector._get_market_status(),
+            "market": "UK"
+        }
+    
+    # Stock not found
     return {
-        "symbol": symbol.upper(),
-        "price": last_price,
-        "marketStatus": stock_collector._get_market_status(),
+        "error": "Stock not found"
     }
