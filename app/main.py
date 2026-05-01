@@ -40,14 +40,16 @@ async def lifespan(app: FastAPI):
     # Start data collection
     await data_collector.start()
     
+    # TEMPORARILY DISABLED: Testing Indian market only with single API key
     # Start stock collection (US stocks)
-    await stock_collector.start()
+    # await stock_collector.start()
     
     # Start Indian stock collection
     await indian_stock_collector.start()
     
+    # TEMPORARILY DISABLED: Testing Indian market only with single API key
     # Start UK stock collection
-    await uk_stock_collector.start()
+    # await uk_stock_collector.start()
     
     # Start candle aggregation
     await candle_aggregator.start()
@@ -59,9 +61,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("⏹️  Shutting down Live Data Engine...")
     await candle_aggregator.stop()
-    await uk_stock_collector.stop()
+    # await uk_stock_collector.stop()  # TEMPORARILY DISABLED
     await indian_stock_collector.stop()
-    await stock_collector.stop()
+    # await stock_collector.stop()  # TEMPORARILY DISABLED
     await data_collector.stop()
     await db.disconnect()
     logger.info("✅ Shutdown complete")

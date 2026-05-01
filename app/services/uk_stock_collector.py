@@ -200,12 +200,13 @@ class UKStockCollector:
 
         while self._running:
             try:
-                if not settings.FINNHUB_API_KEY:
-                    logger.error("FINNHUB_API_KEY not configured")
+                api_key = settings.FINNHUB_API_KEY_UK or settings.FINNHUB_API_KEY
+                if not api_key:
+                    logger.error("FINNHUB_API_KEY_UK or FINNHUB_API_KEY not configured")
                     await asyncio.sleep(30)
                     continue
 
-                finnhub_url = f"wss://ws.finnhub.io?token={settings.FINNHUB_API_KEY}"
+                finnhub_url = f"wss://ws.finnhub.io?token={api_key}"
                 logger.info("Connecting to Finnhub WebSocket for UK stocks...")
                 
                 async with websockets.connect(finnhub_url) as ws:
