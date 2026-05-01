@@ -223,6 +223,13 @@ class StockCollector:
                         
                         try:
                             data = json.loads(message)
+                            msg_type = data.get("type")
+                            logger.info(f"Received Finnhub message type: {msg_type}")
+                            
+                            if msg_type == "error":
+                                logger.error(f"Finnhub error: {data.get('msg')}")
+                                continue
+                            
                             await self._process_finnhub_message(data)
                         except Exception as e:
                             logger.error(f"Error processing Finnhub message: {e}")
