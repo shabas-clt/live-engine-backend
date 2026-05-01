@@ -37,6 +37,9 @@ class Settings(BaseSettings):
 
     # Initial Tiingo Token
     INITIAL_TIINGO_TOKEN: str = ""
+    
+    # Finnhub API Key (for stock data)
+    FINNHUB_API_KEY: str = ""
 
     # Data Collection Settings
     COLLECT_BTC: bool = True
