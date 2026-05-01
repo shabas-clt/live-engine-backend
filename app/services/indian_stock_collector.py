@@ -1,9 +1,10 @@
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Set, List
-import websockets
+import yliveticker
 
 from app.core.config import settings
 from app.core.database import db
@@ -195,41 +196,70 @@ class IndianStockCollector:
         candle_aggregator.ingest_tick(asset_key, price, volume, ts)
 
     async def _collect_stocks(self):
-        """Collect stock data from Finnhub WebSocket"""
+        """Collect stock data from Yahoo Finance WebSocket"""
+        import threading
+        
         backoff = 2.0
 
         while self._running:
             try:
-                api_key = settings.FINNHUB_API_KEY_INDIAN or settings.FINNHUB_API_KEY
-                if not api_key:
-                    logger.error("FINNHUB_API_KEY_INDIAN or FINNHUB_API_KEY not configured")
-                    await asyncio.sleep(30)
-                    continue
-
-                finnhub_url = f"wss://ws.finnhub.io?token={api_key}"
-                logger.info("Connecting to Finnhub WebSocket for Indian stocks...")
+                logger.info(f"Connecting to Yahoo Finance WebSocket for Indian stocks...")
                 
-                async with websockets.connect(finnhub_url) as ws:
-                    logger.info("✅ Connected to Finnhub for Indian stocks")
-                    
-                    # Subscribe to all Indian stock tickers
-                    for ticker in self.STOCK_TICKERS:
-                        subscribe_msg = json.dumps({"type": "subscribe", "symbol": ticker})
-                        await ws.send(subscribe_msg)
-                        logger.info(f"Subscribed to Indian stock: {ticker}")
-                    
-                    backoff = 2.0
-                    
-                    # Listen for messages
-                    async for message in ws:
-                        if not self._running:
-                            break
-                        
-                        try:
-                            data = json.loads(message)
-                            await self._process_finnhub_message(data)
-                        except Exception as e:
-                            logger.error(f"Error processing Finnhub message: {e}")
+                # Get event loop for scheduling coroutines from thread
+                loop = asyncio.get_event_loop()
+                
+                # Flag to track if ticker is running
+                ticker_running = threading.Event()
+                ticker_error = None
+                
+                def on_ticker(ws, msg):
+                    """Callback for ticker updates (runs in separate thread)"""
+                    try:
+                        # Schedule async processing in main event loop
+                        future = asyncio.run_coroutine_threadsafe(
+                            self._process_ticker_message(msg),
+                            loop
+                        )
+                        # Wait for completion with timeout to avoid blocking
+                        future.result(timeout=1.0)
+                    except Exception as e:
+                        logger.error(f"Error processing Indian ticker: {e}")
+                
+                def run_ticker():
+                    """Run YLiveTicker in separate thread"""
+                    nonlocal ticker_error
+                    try:
+                        ticker_running.set()
+                        yliveticker.YLiveTicker(
+                            on_ticker=on_ticker,
+                            ticker_names=self.STOCK_TICKERS
+                        )
+                    except Exception as e:
+                        ticker_error = e
+                        logger.error(f"YLiveTicker error: {e}")
+                    finally:
+                        ticker_running.clear()
+                
+                # Start YLiveTicker in daemon thread
+                ticker_thread = threading.Thread(target=run_ticker, daemon=True)
+                ticker_thread.start()
+                
+                # Wait for ticker to start
+                ticker_running.wait(timeout=10)
+                
+                if not ticker_running.is_set():
+                    raise Exception("Failed to start YLiveTicker")
+                
+                logger.info("✅ Connected to Yahoo Finance for Indian stocks")
+                backoff = 2.0
+                
+                # Keep running while ticker thread is alive
+                while self._running and ticker_thread.is_alive():
+                    await asyncio.sleep(1)
+                
+                # Check if thread died due to error
+                if ticker_error:
+                    raise ticker_error
                 
             except asyncio.CancelledError:
                 raise
@@ -243,57 +273,44 @@ class IndianStockCollector:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
-    async def _process_finnhub_message(self, data: dict):
-        """Process incoming message from Finnhub WebSocket"""
+    async def _process_ticker_message(self, msg: dict):
+        """Process incoming ticker message"""
         try:
-            msg_type = data.get("type")
-            
-            if msg_type == "ping":
+            ticker = msg.get("id", "")
+            if not ticker or ticker not in self.STOCK_TICKERS:
                 return
             
-            if msg_type != "trade":
+            price = msg.get("price")
+            if price is None:
                 return
             
-            trades = data.get("data", [])
+            price = float(price)
+            volume = float(msg.get("dayVolume", 0))
             
-            for trade in trades:
-                ticker = trade.get("s")
-                
-                if not ticker or ticker not in self.STOCK_TICKERS:
-                    continue
-                
-                price = trade.get("p")
-                if price is None:
-                    continue
-                
-                price = float(price)
-                volume = float(trade.get("v", 0))
-                timestamp_ms = trade.get("t", 0)
-                
-                ts = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc).replace(tzinfo=None)
-                
-                async with self._price_lock:
-                    self._last_prices[ticker] = price
-                
-                market_status = self._get_market_status()
-                if market_status == "open":
-                    self._process_tick(ticker, price, volume, ts)
-                    await self._store_tick(ticker, price, volume, ts)
-                
-                metadata = self.STOCK_METADATA.get(ticker, {})
-                symbol = metadata.get("symbol", ticker.replace(".NS", ""))
-                await self._broadcast(ticker, {
-                    "type": "tick",
-                    "asset": f"indian_stock_{symbol.lower()}",
-                    "symbol": symbol,
-                    "price": price,
-                    "volume": volume,
-                    "timestamp": ts.isoformat(),
-                    "marketStatus": market_status,
-                })
+            ts = datetime.utcnow()
+            
+            async with self._price_lock:
+                self._last_prices[ticker] = price
+            
+            market_status = self._get_market_status()
+            if market_status == "open":
+                self._process_tick(ticker, price, volume, ts)
+                await self._store_tick(ticker, price, volume, ts)
+            
+            metadata = self.STOCK_METADATA.get(ticker, {})
+            symbol = metadata.get("symbol", ticker.replace(".NS", ""))
+            await self._broadcast(ticker, {
+                "type": "tick",
+                "asset": f"indian_stock_{symbol.lower()}",
+                "symbol": symbol,
+                "price": price,
+                "volume": volume,
+                "timestamp": ts.isoformat(),
+                "marketStatus": market_status,
+            })
             
         except Exception as e:
-            logger.error(f"Error processing Finnhub message: {e}")
+            logger.error(f"Error processing ticker message: {e}")
 
     async def _flush_ticks_loop(self):
         """Periodically flush buffered ticks to database"""
@@ -330,7 +347,7 @@ class IndianStockCollector:
         asset_key = f"indian_stock_{symbol.lower()}"
 
         async with self._buffer_lock:
-            self._tick_buffer.append((ts, asset_key, price, volume, "finnhub", None))
+            self._tick_buffer.append((ts, asset_key, price, volume, "yahoo_finance", None))
 
             if len(self._tick_buffer) >= 1000:
                 asyncio.create_task(self._flush_ticks())

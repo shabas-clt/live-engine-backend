@@ -37,11 +37,6 @@ class Settings(BaseSettings):
 
     # Initial Tiingo Token
     INITIAL_TIINGO_TOKEN: str = ""
-    
-    # Finnhub API Keys (for stock data - free tier allows 1 WebSocket per key)
-    FINNHUB_API_KEY: str = ""  # For US stocks
-    FINNHUB_API_KEY_INDIAN: str = ""  # For Indian stocks
-    FINNHUB_API_KEY_UK: str = ""  # For UK stocks
 
     # Data Collection Settings
     COLLECT_BTC: bool = True
